@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "xdokelyscys",
+  "version": "1.0",
+  "name": "XDokelyscys Mod",
+  "description": "Allows auto-walking in multiplayer using .autowalk command",
+  "authors": [
+    "Your Name"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "ru.refontstudio.xdokelyscys.XDokelyscys"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.7.4",
+    "minecraft": "1.16.x"
+  },
+  "mixins": [
+    "xdokelyscys.mixins.json"
+  ]
+}

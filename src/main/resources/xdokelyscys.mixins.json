@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "ru.refontstudio.xdokelyscys.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "client": [
+    "ClientChatMixin",
+    "ClientTickMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
