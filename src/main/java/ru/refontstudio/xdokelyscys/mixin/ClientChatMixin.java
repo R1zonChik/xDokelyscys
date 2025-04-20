@@ -23,6 +23,9 @@ public class ClientChatMixin {
     )
     private void onSendChatMessage(String message, CallbackInfo ci) {
         try {
+            // Записываем все команды чата, если идет запись скрипта
+            XDokelyscys.recordChatCommand(message);
+
             if (message.startsWith(".autowalk")) {
                 // Разбиваем команду на части
                 String[] parts = message.trim().split("\\s+");

@@ -10,6 +10,7 @@ import net.minecraft.text.LiteralText;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -28,17 +29,24 @@ public class XDokelyscys implements ClientModInitializer {
     public static final float CAMERA_SMOOTHING = 0.15f; // Коэффициент плавности поворота камеры (0.1 - 0.3)
 
     // Для записи скриптов
-    private static boolean isRecording = false;
+    public static boolean isRecording = false;
     private static String currentScriptName = null;
     private static List<InputAction> recordedActions = new ArrayList<>();
+    private static List<ChatCommandAction> recordedChatCommands = new ArrayList<>();
+    private static List<SlotSelectAction> recordedSlotSelections = new ArrayList<>();
     private static long recordStartTime = 0;
-    private static Map<String, List<InputAction>> savedScripts = new HashMap<>();
+    private static Map<String, ScriptData> savedScripts = new HashMap<>();
+    private static int lastSelectedSlot = -1; // Для отслеживания изменений слота
 
     // Для воспроизведения скриптов
     private static boolean isPlayingScript = false;
     private static boolean isLoopingScript = false; // Новое поле для зацикливания скрипта
     private static List<InputAction> currentScript = null;
+    private static List<ChatCommandAction> currentChatCommands = null;
+    private static List<SlotSelectAction> currentSlotSelections = null;
     private static int currentActionIndex = 0;
+    private static int currentChatCommandIndex = 0;
+    private static int currentSlotSelectionIndex = 0;
     private static long playbackStartTime = 0;
     private static long nextActionTime = 0;
 
@@ -81,6 +89,13 @@ public class XDokelyscys implements ClientModInitializer {
                 // Запоминаем текущий поворот камеры
                 float yaw = client.player.yaw;
                 float pitch = client.player.pitch;
+
+                // Проверяем, изменился ли выбранный слот
+                int currentSlot = client.player.inventory.selectedSlot;
+                if (lastSelectedSlot != -1 && lastSelectedSlot != currentSlot) {
+                    recordSlotSelection(currentSlot);
+                }
+                lastSelectedSlot = currentSlot;
 
                 // Проверяем, изменилось ли состояние с последней записи
                 if (recordedActions.isEmpty() || hasStateChanged(recordedActions.get(recordedActions.size() - 1),
@@ -135,6 +150,8 @@ public class XDokelyscys implements ClientModInitializer {
                     } else if (isLoopingScript) {
                         // Перезапускаем скрипт, если включено зацикливание
                         currentActionIndex = 0;
+                        currentChatCommandIndex = 0;
+                        currentSlotSelectionIndex = 0;
                         playbackStartTime = System.currentTimeMillis();
                         if (currentScript.size() > 0) {
                             nextActionTime = playbackStartTime + currentScript.get(0).timestamp;
@@ -162,6 +179,12 @@ public class XDokelyscys implements ClientModInitializer {
                         client.player.pitch = targetPitch;
                     }
                 }
+
+                // Проверяем и выполняем команды чата
+                checkAndExecuteChatCommands();
+
+                // Проверяем и выполняем переключения слотов
+                checkAndExecuteSlotSelections();
             }
 
             // Если автоходьба активна и не воспроизводится скрипт
@@ -214,6 +237,96 @@ public class XDokelyscys implements ClientModInitializer {
             // В случае ошибки отпускаем все клавиши
             releaseAllKeys(client);
         }
+    }
+
+    /**
+     * Проверяет и выполняет команды чата в нужное время
+     */
+    private static void checkAndExecuteChatCommands() {
+        if (!isPlayingScript || currentChatCommands == null || currentChatCommandIndex >= currentChatCommands.size()) {
+            return;
+        }
+
+        long currentTime = System.currentTimeMillis() - playbackStartTime;
+
+        while (currentChatCommandIndex < currentChatCommands.size()) {
+            ChatCommandAction command = currentChatCommands.get(currentChatCommandIndex);
+
+            // Если время команды наступило
+            if (currentTime >= command.timestamp) {
+                // Выполняем команду
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client != null && client.player != null) {
+                    client.player.sendChatMessage(command.command);
+                    System.out.println("XDokelyscys: Выполнена команда чата: " + command.command);
+                }
+
+                // Переходим к следующей команде
+                currentChatCommandIndex++;
+            } else {
+                // Если время следующей команды ещё не наступило, выходим из цикла
+                break;
+            }
+        }
+
+        // Если скрипт зациклен и все команды выполнены, перезапускаем
+        if (isLoopingScript && currentChatCommandIndex >= currentChatCommands.size() &&
+                currentActionIndex >= currentScript.size() &&
+                currentSlotSelectionIndex >= currentSlotSelections.size()) {
+            currentChatCommandIndex = 0;
+        }
+    }
+
+    /**
+     * Проверяет и выполняет переключение слотов в нужное время
+     */
+    private static void checkAndExecuteSlotSelections() {
+        if (!isPlayingScript || currentSlotSelections == null || currentSlotSelectionIndex >= currentSlotSelections.size()) {
+            return;
+        }
+
+        long currentTime = System.currentTimeMillis() - playbackStartTime;
+
+        while (currentSlotSelectionIndex < currentSlotSelections.size()) {
+            SlotSelectAction slotAction = currentSlotSelections.get(currentSlotSelectionIndex);
+
+            // Если время действия наступило
+            if (currentTime >= slotAction.timestamp) {
+                // Выполняем переключение слота
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client != null && client.player != null) {
+                    client.player.inventory.selectedSlot = slotAction.slotNumber;
+                    System.out.println("XDokelyscys: Выбран слот: " + slotAction.slotNumber);
+                }
+
+                // Переходим к следующему действию
+                currentSlotSelectionIndex++;
+            } else {
+                // Если время следующего действия ещё не наступило, выходим из цикла
+                break;
+            }
+        }
+
+        // Если скрипт зациклен и все действия выполнены, перезапускаем
+        if (isLoopingScript && currentSlotSelectionIndex >= currentSlotSelections.size() &&
+                currentActionIndex >= currentScript.size() &&
+                currentChatCommandIndex >= currentChatCommands.size()) {
+            currentSlotSelectionIndex = 0;
+        }
+    }
+
+    /**
+     * Записывает выбор слота при записи скрипта
+     */
+    public static void recordSlotSelection(int slotNumber) {
+        if (!isRecording) return;
+
+        long currentTime = System.currentTimeMillis();
+        long timeSinceStart = currentTime - recordStartTime;
+
+        SlotSelectAction action = new SlotSelectAction(timeSinceStart, slotNumber);
+        recordedSlotSelections.add(action);
+        System.out.println("Записано переключение слота: " + action);
     }
 
     /**
@@ -317,6 +430,20 @@ public class XDokelyscys implements ClientModInitializer {
     }
 
     /**
+     * Записывает команду чата при записи скрипта
+     */
+    public static void recordChatCommand(String message) {
+        if (!isRecording) return;
+
+        long currentTime = System.currentTimeMillis();
+        long timeSinceStart = currentTime - recordStartTime;
+
+        ChatCommandAction action = new ChatCommandAction(timeSinceStart, message);
+        recordedChatCommands.add(action);
+        System.out.println("Записана команда чата: " + action);
+    }
+
+    /**
      * Начинает запись скрипта
      */
     public static void startRecording(String scriptName) {
@@ -327,9 +454,18 @@ public class XDokelyscys implements ClientModInitializer {
         isRecording = true;
         currentScriptName = scriptName;
         recordedActions.clear();
+        recordedChatCommands.clear();
+        recordedSlotSelections.clear();
         recordStartTime = System.currentTimeMillis();
 
+        // Инициализируем текущий слот
         MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.player != null) {
+            lastSelectedSlot = client.player.inventory.selectedSlot;
+        } else {
+            lastSelectedSlot = -1;
+        }
+
         if (client != null && client.player != null) {
             client.player.sendMessage(new LiteralText("§a[AutoWalk] §fНачата запись скрипта: " + scriptName), false);
         }
@@ -347,11 +483,16 @@ public class XDokelyscys implements ClientModInitializer {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.player != null) {
             if (save && currentScriptName != null && !recordedActions.isEmpty()) {
-                savedScripts.put(currentScriptName, new ArrayList<>(recordedActions));
+                savedScripts.put(currentScriptName, new ScriptData(
+                        new ArrayList<>(recordedActions),
+                        new ArrayList<>(recordedChatCommands),
+                        new ArrayList<>(recordedSlotSelections)
+                ));
+
                 client.player.sendMessage(new LiteralText("§a[AutoWalk] §fЗапись скрипта сохранена: " + currentScriptName), false);
 
                 // Сохраняем скрипт в файл
-                saveScriptToFile(currentScriptName, recordedActions);
+                saveScriptToFile(currentScriptName);
             } else {
                 client.player.sendMessage(new LiteralText("§a[AutoWalk] §fЗапись скрипта отменена"), false);
             }
@@ -359,17 +500,28 @@ public class XDokelyscys implements ClientModInitializer {
 
         currentScriptName = null;
         recordedActions.clear();
+        recordedChatCommands.clear();
+        recordedSlotSelections.clear();
+        lastSelectedSlot = -1;
     }
 
     /**
      * Сохраняет скрипт в файл
      */
-    private static void saveScriptToFile(String scriptName, List<InputAction> actions) {
+    private static void saveScriptToFile(String scriptName) {
         File scriptDir = new File(MinecraftClient.getInstance().runDirectory, "xdokelyscys-scripts");
         File scriptFile = new File(scriptDir, scriptName + ".script");
 
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(scriptFile))) {
-            oos.writeObject(actions);
+            // Сохраняем действия
+            oos.writeObject(recordedActions);
+
+            // Сохраняем команды чата
+            oos.writeObject(recordedChatCommands);
+
+            // Сохраняем выборы слотов
+            oos.writeObject(recordedSlotSelections);
+
             System.out.println("XDokelyscys: Скрипт сохранен в файл: " + scriptFile.getAbsolutePath());
         } catch (IOException e) {
             System.out.println("XDokelyscys: Ошибка при сохранении скрипта: " + e.getMessage());
@@ -381,7 +533,7 @@ public class XDokelyscys implements ClientModInitializer {
      * Загружает скрипт из файла
      */
     @SuppressWarnings("unchecked")
-    private static List<InputAction> loadScriptFromFile(String scriptName) {
+    private static ScriptData loadScriptFromFile(String scriptName) {
         File scriptDir = new File(MinecraftClient.getInstance().runDirectory, "xdokelyscys-scripts");
         File scriptFile = new File(scriptDir, scriptName + ".script");
 
@@ -392,8 +544,27 @@ public class XDokelyscys implements ClientModInitializer {
 
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(scriptFile))) {
             List<InputAction> actions = (List<InputAction>) ois.readObject();
+
+            // Пытаемся загрузить команды чата (для обратной совместимости)
+            List<ChatCommandAction> chatCommands = new ArrayList<>();
+            try {
+                chatCommands = (List<ChatCommandAction>) ois.readObject();
+            } catch (Exception e) {
+                // Если не удалось загрузить команды чата, оставляем пустой список
+                System.out.println("XDokelyscys: Не удалось загрузить команды чата, возможно старый формат файла");
+            }
+
+            // Пытаемся загрузить выборы слотов (для обратной совместимости)
+            List<SlotSelectAction> slotSelections = new ArrayList<>();
+            try {
+                slotSelections = (List<SlotSelectAction>) ois.readObject();
+            } catch (Exception e) {
+                // Если не удалось загрузить выборы слотов, оставляем пустой список
+                System.out.println("XDokelyscys: Не удалось загрузить выборы слотов, возможно старый формат файла");
+            }
+
             System.out.println("XDokelyscys: Скрипт загружен из файла: " + scriptFile.getAbsolutePath());
-            return actions;
+            return new ScriptData(actions, chatCommands, slotSelections);
         } catch (IOException | ClassNotFoundException e) {
             System.out.println("XDokelyscys: Ошибка при загрузке скрипта: " + e.getMessage());
             e.printStackTrace();
@@ -406,15 +577,15 @@ public class XDokelyscys implements ClientModInitializer {
      */
     public static void playScript(String scriptName, boolean loop) {
         // Сначала пытаемся загрузить из оперативной памяти
-        List<InputAction> script = savedScripts.get(scriptName);
+        ScriptData scriptData = savedScripts.get(scriptName);
 
         // Если нет в памяти, пытаемся загрузить из файла
-        if (script == null) {
-            script = loadScriptFromFile(scriptName);
+        if (scriptData == null) {
+            scriptData = loadScriptFromFile(scriptName);
         }
 
         // Если всё равно не нашли
-        if (script == null || script.isEmpty()) {
+        if (scriptData == null || scriptData.actions.isEmpty()) {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client != null && client.player != null) {
                 client.player.sendMessage(new LiteralText("§c[AutoWalk] §fСкрипт не найден: " + scriptName), false);
@@ -435,8 +606,12 @@ public class XDokelyscys implements ClientModInitializer {
         // Запускаем воспроизведение
         isPlayingScript = true;
         isLoopingScript = loop; // Устанавливаем режим зацикливания
-        currentScript = script;
+        currentScript = scriptData.actions;
+        currentChatCommands = scriptData.chatCommands;
+        currentSlotSelections = scriptData.slotSelections;
         currentActionIndex = 0;
+        currentChatCommandIndex = 0;
+        currentSlotSelectionIndex = 0;
         playbackStartTime = System.currentTimeMillis();
         hasTargetRotation = false;
 
@@ -465,7 +640,11 @@ public class XDokelyscys implements ClientModInitializer {
         isPlayingScript = false;
         isLoopingScript = false;
         currentScript = null;
+        currentChatCommands = null;
+        currentSlotSelections = null;
         currentActionIndex = 0;
+        currentChatCommandIndex = 0;
+        currentSlotSelectionIndex = 0;
         hasTargetRotation = false;
 
         // Отпускаем все клавиши
@@ -498,7 +677,10 @@ public class XDokelyscys implements ClientModInitializer {
 
         // Выводим скрипты из оперативной памяти
         for (String name : savedScripts.keySet()) {
-            client.player.sendMessage(new LiteralText("§f- " + name + " (" + savedScripts.get(name).size() + " действий)"), false);
+            ScriptData data = savedScripts.get(name);
+            String chatInfo = data.chatCommands.isEmpty() ? "" : " (" + data.chatCommands.size() + " команд чата)";
+            String slotInfo = data.slotSelections.isEmpty() ? "" : " (" + data.slotSelections.size() + " выборов слотов)";
+            client.player.sendMessage(new LiteralText("§f- " + name + " (" + data.actions.size() + " действий)" + chatInfo + slotInfo), false);
         }
 
         // Выводим скрипты из файлов (если они не в памяти)
@@ -531,6 +713,21 @@ public class XDokelyscys implements ClientModInitializer {
         client.player.sendMessage(new LiteralText("§f.autowalk stopplay - остановить воспроизведение скрипта"), false);
         client.player.sendMessage(new LiteralText("§f.autowalk scripts - показать список скриптов"), false);
         client.player.sendMessage(new LiteralText("§fНаправления: forward, back, left, right"), false);
+    }
+
+    /**
+     * Класс для хранения данных скрипта
+     */
+    public static class ScriptData {
+        public final List<InputAction> actions;
+        public final List<ChatCommandAction> chatCommands;
+        public final List<SlotSelectAction> slotSelections;
+
+        public ScriptData(List<InputAction> actions, List<ChatCommandAction> chatCommands, List<SlotSelectAction> slotSelections) {
+            this.actions = actions;
+            this.chatCommands = chatCommands;
+            this.slotSelections = slotSelections;
+        }
     }
 
     /**
@@ -569,6 +766,46 @@ public class XDokelyscys implements ClientModInitializer {
         public String toString() {
             return String.format("t:%d, f:%b, b:%b, l:%b, r:%b, j:%b, s:%b, sn:%b, yaw:%.2f, pitch:%.2f",
                     timestamp, forward, back, left, right, jump, sprint, sneak, yaw, pitch);
+        }
+    }
+
+    /**
+     * Класс для хранения команд чата
+     */
+    public static class ChatCommandAction implements Serializable {
+        private static final long serialVersionUID = 2L;
+
+        public final long timestamp;
+        public final String command;
+
+        public ChatCommandAction(long timestamp, String command) {
+            this.timestamp = timestamp;
+            this.command = command;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("t:%d, cmd:%s", timestamp, command);
+        }
+    }
+
+    /**
+     * Класс для хранения выбора слота
+     */
+    public static class SlotSelectAction implements Serializable {
+        private static final long serialVersionUID = 3L;
+
+        public final long timestamp;
+        public final int slotNumber; // 0-8 (соответствует слотам 1-9 в интерфейсе)
+
+        public SlotSelectAction(long timestamp, int slotNumber) {
+            this.timestamp = timestamp;
+            this.slotNumber = slotNumber;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("t:%d, slot:%d", timestamp, slotNumber);
         }
     }
 }
